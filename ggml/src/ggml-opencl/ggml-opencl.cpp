@@ -2257,7 +2257,7 @@ static ggml_backend_opencl_context * ggml_cl2_init(ggml_backend_dev_t dev) {
     } else if (strstr(dev_ctx->device_name.c_str(), "Intel")) {
         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
     } else if (strstr(dev_ctx->device_name.c_str(), "NVIDIA") || 
-               strstr(dev_ctx->device_name.c_str(), "Arise")) {
+               strstr(dev_ctx->device_name.c_str(), "Glenfly")) {
         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
         // backend_ctx->gpu_family = GPU_FAMILY::KYLIN;
         GGML_LOG_INFO("ggml_opencl: support Kylin gpu family : %s\n", dev_ctx->device_name.c_str());
