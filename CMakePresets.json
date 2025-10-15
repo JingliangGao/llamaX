@@ -30,7 +30,7 @@
     { "name": "static",   "hidden": true, "cacheVariables": { "GGML_STATIC":      "ON" } },
     { "name": "sycl_f16", "hidden": true, "cacheVariables": { "GGML_SYCL_F16":    "ON" } },
     { "name": "vulkan",   "hidden": true, "cacheVariables": { "GGML_VULKAN":      "ON" } },
-    { "name": "opencl",   "hidden": true, "cacheVariables": { "GGML_OPENCL":      "ON", "GGML_OPENCL_USE_ADRENO_KERNELS" : "OFF" } },
+    { "name": "opencl",   "hidden": true, "cacheVariables": { "GGML_OPENCL":      "ON", "GGML_OPENCL_EMBED_KERNELS": "ON", "GGML_OPENCL_USE_ADRENO_KERNELS" : "OFF", "GGML_OPENCL_USE_KYLIN_KERNELS" : "ON"} },
 
     {
         "name": "x64-windows-llvm", "hidden": true,

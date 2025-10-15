@@ -48,6 +48,10 @@ static inline float e8m0_to_fp32(uchar x) {
 #define N_R0_MXFP4 2
 #define N_SG_MXFP4 2
 #define N_SIMDWIDTH 64
+#elif defined (KYLIN_GPU)
+#define N_R0_MXFP4 2
+#define N_SG_MXFP4 2
+#define N_SIMDWIDTH 64
 #endif
 
 inline void mul_mv_mxfp4_f32(

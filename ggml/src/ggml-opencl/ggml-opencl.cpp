@@ -590,7 +590,13 @@ struct ggml_backend_opencl_context {
         populateProfilingInfo(profiling_info.back(), evt, kernel, work_dim, global_work_size, local_work_size, tensor);
 #else
         GGML_UNUSED(tensor);
-        CL_CHECK(clEnqueueNDRangeKernel(queue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, NULL));
+
+        cl_int err = clEnqueueNDRangeKernel(queue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, NULL);
+        if (err == CL_INVALID_WORK_GROUP_SIZE) {
+            // fprintf(stderr, "CL_INVALID_WORK_GROUP_SIZE, retrying with work_dim=1/local=NULL\n");
+            err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, global_work_size, NULL, 0, NULL, NULL);
+        }
+        GGML_ASSERT(err == CL_SUCCESS);
 #endif
     }
 
@@ -684,9 +690,17 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx, ggml_cl_ve
     // compiler options for general kernels
     auto opencl_c_std =
         std::string("CL") + std::to_string(opencl_c_version.major) + "." + std::to_string(opencl_c_version.minor);
+#ifdef GGML_OPENCL_USE_KYLIN_KERNELS
+    std::string compile_opts = std::string("-cl-std=") + opencl_c_std +
+                               " -cl-mad-enable -cl-unsafe-math-optimizations"
+                               " -cl-finite-math-only -cl-fast-relaxed-math"
+                               " -DKYLIN_GPU";
+#else
     std::string compile_opts = std::string("-cl-std=") + opencl_c_std +
                                " -cl-mad-enable -cl-unsafe-math-optimizations"
                                " -cl-finite-math-only -cl-fast-relaxed-math";
+#endif
+
 
     GGML_LOG_INFO("ggml_opencl: loading OpenCL kernels");
 
@@ -1473,8 +1487,16 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx, ggml_cl_ve
 #else
         const std::string kernel_src = read_file("div.cl");
 #endif
-        std::string compile_opts = std::string("-cl-std=") + opencl_c_std +
+
+#ifdef GGML_OPENCL_USE_KYLIN_KERNELS
+    std::string compile_opts = std::string("-cl-std=") + opencl_c_std +
+                               " -cl-mad-enable -cl-finite-math-only "
+                               " -DKYLIN_GPU";
+#else
+    std::string compile_opts = std::string("-cl-std=") + opencl_c_std +
                                " -cl-mad-enable -cl-finite-math-only ";
+#endif
+
 
         backend_ctx->program_div =
             build_program_from_source(backend_ctx->context, backend_ctx->device, kernel_src.c_str(), compile_opts);
@@ -2256,7 +2278,7 @@ static ggml_backend_opencl_context * ggml_cl2_init(ggml_backend_dev_t dev) {
         backend_ctx->adreno_wave_size = 64;
     } else if (strstr(dev_ctx->device_name.c_str(), "Intel")) {
         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
-    } else if (strstr(dev_ctx->device_name.c_str(), "NVIDIA") || 
+    } else if (strstr(dev_ctx->device_name.c_str(), "NVIDIA") ||
                strstr(dev_ctx->device_name.c_str(), "Glenfly")) {
         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
         // backend_ctx->gpu_family = GPU_FAMILY::KYLIN;
@@ -2355,8 +2377,13 @@ static ggml_backend_opencl_context * ggml_cl2_init(ggml_backend_dev_t dev) {
         svm_caps & CL_DEVICE_SVM_ATOMICS ? "true" : "false");
 
     if (opencl_c_version.major >= 3) {
+        // Assume it is not available for 3.0, since it is optional in 3.0.
+        // If compiling against 3.0, then we can query.
+        backend_ctx->non_uniform_workgroups = false;
+#if CL_TARGET_OPENCL_VERSION >= 300
         CL_CHECK(clGetDeviceInfo(device, CL_DEVICE_NON_UNIFORM_WORK_GROUP_SUPPORT, sizeof(cl_bool),
                                  &backend_ctx->non_uniform_workgroups, 0));
+#endif
     } else {
         GGML_ASSERT(opencl_c_version.major == 2);
         // Non-uniform workgroup sizes is mandatory feature in v2.x.

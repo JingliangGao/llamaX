@@ -89,6 +89,10 @@ inline float mm_block_q_4_0_dot_y_flat(
 #define N_DST 16
 #define N_SIMDGROUP 1
 #define N_SIMDWIDTH 64
+#elif defined(KYLIN_GPU)
+#define N_DST 16
+#define N_SIMDGROUP 1
+#define N_SIMDWIDTH 64
 #endif
 //
 // This variant performs 1d blocking with 16x output.
