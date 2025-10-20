@@ -600,6 +600,25 @@ struct ggml_backend_opencl_context {
             // fprintf(stderr, "CL_INVALID_WORK_GROUP_SIZE, retrying with work_dim=1/local=NULL\n");
             err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, global_work_size, NULL, 0, NULL, NULL);
         }
+        if (err == CL_INVALID_WORK_ITEM_SIZE) {
+            // fprintf(stderr, "CL_INVALID_WORK_ITEM_SIZE, retrying with work_dim=1/local=NULL\n");
+            err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, global_work_size, NULL, 0, NULL, NULL);
+        }
+
+        /* error handling */
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "❌ OpenCL Error %d in enqueue_ndrange_kernel (tensor=%p)\n", err, (void*)tensor);
+            fprintf(stderr, "   global_work_size = [%zu, %zu, %zu]\n",
+                global_work_size ? global_work_size[0] : 0,
+                global_work_size ? global_work_size[1] : 0,
+                global_work_size ? global_work_size[2] : 0);
+            fprintf(stderr, "   local_work_size  = [%zu, %zu, %zu]\n",
+                local_work_size ? local_work_size[0] : 0,
+                local_work_size ? local_work_size[1] : 0,
+                local_work_size ? local_work_size[2] : 0);
+            fflush(stderr);
+        }
+
         GGML_ASSERT(err == CL_SUCCESS);
 #endif
     }
