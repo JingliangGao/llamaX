@@ -86,10 +86,17 @@ kernel void kernel_mul_mm_f16_f32_l4_lm(
                 buf_a[(loadr_a * LOAD_VEC_A + 2) * BM + loadc_a + l] = src0[idx].s2;
                 buf_a[(loadr_a * LOAD_VEC_A + 3) * BM + loadc_a + l] = src0[idx].s3;
             } else {
+#ifdef KYLIN_GPU
+                buf_a[(loadr_a * LOAD_VEC_A + 0) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 1) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 2) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 3) * BM + loadc_a + l] = (half)0.0;
+#else
                 buf_a[(loadr_a * LOAD_VEC_A + 0) * BM + loadc_a + l] = 0.0h;
                 buf_a[(loadr_a * LOAD_VEC_A + 1) * BM + loadc_a + l] = 0.0h;
                 buf_a[(loadr_a * LOAD_VEC_A + 2) * BM + loadc_a + l] = 0.0h;
                 buf_a[(loadr_a * LOAD_VEC_A + 3) * BM + loadc_a + l] = 0.0h;
+#endif
             }
         }
 
@@ -101,10 +108,19 @@ kernel void kernel_mul_mm_f16_f32_l4_lm(
                 buf_b[(loadr_b * LOAD_VEC_B + 2) * BN + loadc_b + l] = src1[idx].s2;
                 buf_b[(loadr_b * LOAD_VEC_B + 3) * BN + loadc_b + l] = src1[idx].s3;
             } else {
+
+#ifdef KYLIN_GPU
+                buf_a[(loadr_a * LOAD_VEC_A + 0) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 1) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 2) * BM + loadc_a + l] = (half)0.0;
+                buf_a[(loadr_a * LOAD_VEC_A + 3) * BM + loadc_a + l] = (half)0.0;
+
+#else
                 buf_b[(loadr_b * LOAD_VEC_B + 0) * BN + loadc_b + l] = 0.0h;
                 buf_b[(loadr_b * LOAD_VEC_B + 1) * BN + loadc_b + l] = 0.0h;
                 buf_b[(loadr_b * LOAD_VEC_B + 2) * BN + loadc_b + l] = 0.0h;
                 buf_b[(loadr_b * LOAD_VEC_B + 3) * BN + loadc_b + l] = 0.0h;
+#endif
             }
         }
 
