@@ -4,16 +4,16 @@
 
 llama.cpp is a low-cost and high-efficiency LLM inference framework in C/C++, more details can be found [here](https://github.com/ggml-org/llama.cpp).
 
-In this branch, we expand the OpenCL backend. 
+In this branch, we expand the OpenCL backend.
 
 ## Quick start
-1. set up environment    
+1. set up environment
 ```bash
 sudo apt update
 sudo apt install -y ocl-icd-opencl-dev opencl-headers
 sudo apt install -y opencl-cpp-headers
 ```
-2. build     
+2. build
 ```bash
 chmod +x build-for-debug.sh && build-for-debug.sh
 ```
