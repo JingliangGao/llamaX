@@ -12,7 +12,7 @@ static void print_usage(int, char ** argv) {
 
 int main(int argc, char ** argv) {
     // path to the model gguf file
-    std::string model_path;
+    std::string model_path = "/home/JingliangGao/model/Qwen1.5-0.5B-Chat-GGUF/qwen1_5-0_5b-chat-q4_k_m.gguf";
     // prompt to generate text from
     std::string prompt = "Hello my name is";
     // number of layers to offload to the GPU
@@ -20,59 +20,59 @@ int main(int argc, char ** argv) {
     // number of tokens to predict
     int n_predict = 32;
 
-    // parse command line arguments
+    // // parse command line arguments
 
-    {
-        int i = 1;
-        for (; i < argc; i++) {
-            if (strcmp(argv[i], "-m") == 0) {
-                if (i + 1 < argc) {
-                    model_path = argv[++i];
-                } else {
-                    print_usage(argc, argv);
-                    return 1;
-                }
-            } else if (strcmp(argv[i], "-n") == 0) {
-                if (i + 1 < argc) {
-                    try {
-                        n_predict = std::stoi(argv[++i]);
-                    } catch (...) {
-                        print_usage(argc, argv);
-                        return 1;
-                    }
-                } else {
-                    print_usage(argc, argv);
-                    return 1;
-                }
-            } else if (strcmp(argv[i], "-ngl") == 0) {
-                if (i + 1 < argc) {
-                    try {
-                        ngl = std::stoi(argv[++i]);
-                    } catch (...) {
-                        print_usage(argc, argv);
-                        return 1;
-                    }
-                } else {
-                    print_usage(argc, argv);
-                    return 1;
-                }
-            } else {
-                // prompt starts here
-                break;
-            }
-        }
-        if (model_path.empty()) {
-            print_usage(argc, argv);
-            return 1;
-        }
-        if (i < argc) {
-            prompt = argv[i++];
-            for (; i < argc; i++) {
-                prompt += " ";
-                prompt += argv[i];
-            }
-        }
-    }
+    // {
+    //     int i = 1;
+    //     for (; i < argc; i++) {
+    //         if (strcmp(argv[i], "-m") == 0) {
+    //             if (i + 1 < argc) {
+    //                 model_path = argv[++i];
+    //             } else {
+    //                 print_usage(argc, argv);
+    //                 return 1;
+    //             }
+    //         } else if (strcmp(argv[i], "-n") == 0) {
+    //             if (i + 1 < argc) {
+    //                 try {
+    //                     n_predict = std::stoi(argv[++i]);
+    //                 } catch (...) {
+    //                     print_usage(argc, argv);
+    //                     return 1;
+    //                 }
+    //             } else {
+    //                 print_usage(argc, argv);
+    //                 return 1;
+    //             }
+    //         } else if (strcmp(argv[i], "-ngl") == 0) {
+    //             if (i + 1 < argc) {
+    //                 try {
+    //                     ngl = std::stoi(argv[++i]);
+    //                 } catch (...) {
+    //                     print_usage(argc, argv);
+    //                     return 1;
+    //                 }
+    //             } else {
+    //                 print_usage(argc, argv);
+    //                 return 1;
+    //             }
+    //         } else {
+    //             // prompt starts here
+    //             break;
+    //         }
+    //     }
+    //     if (model_path.empty()) {
+    //         print_usage(argc, argv);
+    //         return 1;
+    //     }
+    //     if (i < argc) {
+    //         prompt = argv[i++];
+    //         for (; i < argc; i++) {
+    //             prompt += " ";
+    //             prompt += argv[i];
+    //         }
+    //     }
+    // }
 
     // load dynamic backends
 

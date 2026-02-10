@@ -4,10 +4,10 @@
 PROJECT_DIR=$(pwd)
 
 # create build directory
-if [ ! -d "build_porn" ]; then
-    mkdir build_porn
+if [ ! -d "build_ponn" ]; then
+    mkdir build_ponn
 fi
-cd build_porn
+cd build_ponn
 
 # build project
 cmake .. \
