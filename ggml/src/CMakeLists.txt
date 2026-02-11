@@ -200,6 +200,7 @@ add_library(ggml-base
             ggml.cpp
             ggml-alloc.c
             ggml-backend.cpp
+            ggml-backend-devs.cpp
             ggml-opt.cpp
             ggml-threading.cpp
             ggml-threading.h

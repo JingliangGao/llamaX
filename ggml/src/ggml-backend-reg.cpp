@@ -2,6 +2,7 @@
 #include "ggml-backend.h"
 #include "ggml-backend-dl.h"
 #include "ggml-impl.h"
+#include "ggml-backend-devs.h"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -10,6 +11,8 @@
 #include <type_traits>
 #include <vector>
 #include <cctype>
+#include <sys/stat.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -102,6 +105,23 @@ static std::string path_str(const fs::path & path) {
         return std::string();
     }
 }
+
+#if defined(__clang__)
+#    pragma clang diagnostic pop
+#endif
+
+#ifdef __x86_64__
+    #define LIB_GGML_BACKEND_PATH "/usr/lib/x86_64-linux-gnu/"
+#elif defined(__aarch64__)
+    #define LIB_GGML_BACKEND_PATH "/usr/lib/aarch64-linux-gnu/"
+#else
+    #error "Unsupported architecture"
+#endif
+
+#define XPU_PLUGIN_LIB_PATH 256
+
+
+using dl_handle_ptr = std::unique_ptr<dl_handle, dl_handle_deleter>;
 
 struct ggml_backend_reg_entry {
     ggml_backend_reg_t reg;
@@ -466,6 +486,7 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
 #ifdef GGML_BACKEND_DIR
         search_paths.push_back(fs::u8path(GGML_BACKEND_DIR));
 #endif
+        search_paths.push_back(LIB_GGML_BACKEND_PATH);
         // default search paths: executable directory, current directory
         search_paths.push_back(get_executable_path());
         search_paths.push_back(fs::current_path());
@@ -499,9 +520,9 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
                         auto score_fn = (ggml_backend_score_t) dl_get_sym(handle.get(), "ggml_backend_score");
                         if (score_fn) {
                             int s = score_fn();
-#ifndef NDEBUG
+// #ifndef NDEBUG
                             GGML_LOG_DEBUG("%s: %s score: %d\n", __func__, path_str(entry.path()).c_str(), s);
-#endif
+// #endif
                             if (s > best_score) {
                                 best_score = s;
                                 best_path = entry.path();
@@ -547,24 +568,103 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
     bool silent = false;
 #endif
 
-    ggml_backend_load_best("blas", silent, dir_path);
-    ggml_backend_load_best("zendnn", silent, dir_path);
-    ggml_backend_load_best("cann", silent, dir_path);
-    ggml_backend_load_best("cuda", silent, dir_path);
-    ggml_backend_load_best("hip", silent, dir_path);
-    ggml_backend_load_best("metal", silent, dir_path);
-    ggml_backend_load_best("rpc", silent, dir_path);
-    ggml_backend_load_best("sycl", silent, dir_path);
-    ggml_backend_load_best("vulkan", silent, dir_path);
-    ggml_backend_load_best("virtgpu", silent, dir_path);
-    ggml_backend_load_best("opencl", silent, dir_path);
-    ggml_backend_load_best("hexagon", silent, dir_path);
-    ggml_backend_load_best("musa", silent, dir_path);
-    ggml_backend_load_best("ponn", silent, dir_path);
+    // ggml_backend_load_best("blas", silent, dir_path);
+    // ggml_backend_load_best("zendnn", silent, dir_path);
+    // ggml_backend_load_best("cann", silent, dir_path);
+    // ggml_backend_load_best("cuda", silent, dir_path);
+    // ggml_backend_load_best("hip", silent, dir_path);
+    // ggml_backend_load_best("metal", silent, dir_path);
+    // ggml_backend_load_best("rpc", silent, dir_path);
+    // ggml_backend_load_best("sycl", silent, dir_path);
+    // ggml_backend_load_best("vulkan", silent, dir_path);
+    // ggml_backend_load_best("virtgpu", silent, dir_path);
+    // ggml_backend_load_best("opencl", silent, dir_path);
+    // ggml_backend_load_best("hexagon", silent, dir_path);
+    // ggml_backend_load_best("musa", silent, dir_path);
+
     ggml_backend_load_best("cpu", silent, dir_path);
-    // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend
-    const char * backend_path = std::getenv("GGML_BACKEND_PATH");
-    if (backend_path) {
-        ggml_backend_load(backend_path);
+
+    char plugin_name[XPU_PLUGIN_NAME_SIZE] = {0};
+    char plugin_lib_path[XPU_PLUGIN_LIB_PATH] = {0};
+
+    // 1. 先检测硬件设备
+    if (!find_devs_via_sysfs(plugin_name)) {
+        GGML_LOG_INFO("No support xpu found, using cpu\n");
+        return;
     }
+
+    GGML_LOG_INFO("Detected device plugin: %s\n", plugin_name);
+
+    // 2. 安全地构建插件库路径
+    // 计算所需的总长度
+    size_t required_len = strlen(LIB_GGML_BACKEND_PATH) +
+                         strlen("libggml-") +
+                         strlen(plugin_name) +
+                         strlen(".so") + 1; // +1 for null terminator
+
+    if (required_len > XPU_PLUGIN_LIB_PATH) {
+        GGML_LOG_ERROR("Backend plugin path length %zu exceeds buffer size %d, using cpu.\n",
+                      required_len, XPU_PLUGIN_LIB_PATH);
+        return;
+    }
+
+    // 使用 snprintf 安全拼接路径
+    int written = snprintf(plugin_lib_path, sizeof(plugin_lib_path),
+                          "%slibggml-%s.so", LIB_GGML_BACKEND_PATH, plugin_name);
+
+    if (written < 0) {
+        GGML_LOG_ERROR("Failed to construct plugin path, using cpu\n");
+        return;
+    } else if ((size_t)written >= sizeof(plugin_lib_path)) {
+        // 理论上不应该发生，因为前面已经检查过长度
+        GGML_LOG_ERROR("Plugin path truncated, using cpu\n");
+        return;
+    }
+
+    GGML_LOG_INFO("Checking backend library: %s\n", plugin_lib_path);
+
+    // 3. 检查库文件是否存在
+    struct stat buf;
+    errno = 0;
+
+    if (stat(plugin_lib_path, &buf) != 0) {
+        if (errno == ENOENT) {
+            GGML_LOG_ERROR("Backend library '%s' not found, using cpu\n", plugin_lib_path);
+        } else {
+            GGML_LOG_ERROR("Failed to stat '%s', errno=%d (%s), using cpu\n",
+                          plugin_lib_path, errno, strerror(errno));
+        }
+        return;
+    }
+
+    // 4. 检查是否是常规文件（不是目录、符号链接等）
+    if (!S_ISREG(buf.st_mode)) {
+        GGML_LOG_ERROR("'%s' is not a regular file, using cpu\n", plugin_lib_path);
+        return;
+    }
+
+    // 5. 检查文件是否有读取权限（可选）
+    if (access(plugin_lib_path, R_OK) != 0) {
+        GGML_LOG_ERROR("No read permission for '%s', using cpu\n", plugin_lib_path);
+        return;
+    }
+
+    // 6. 加载检测到的后端
+    GGML_LOG_INFO("Loading xpu backend library: %s\n", plugin_lib_path);
+
+    // 注意：根据ggml_backend_load_best函数的实际签名，可能需要传递不同的参数
+    // 这里假设它接受插件名称和路径
+    if (!ggml_backend_load_best(plugin_name, silent, dir_path)) {
+        GGML_LOG_ERROR("Failed to load backend plugin '%s', using cpu\n", plugin_name);
+    } else {
+        GGML_LOG_INFO("Successfully loaded %s backend\n", plugin_name);
+    }
+
+    // ggml_backend_load_best("ponn", silent, dir_path);
+
+    // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend
+//     const char * backend_path = std::getenv("GGML_BACKEND_PATH");
+//     if (backend_path) {
+//         ggml_backend_load(backend_path);
+//     }
 }
