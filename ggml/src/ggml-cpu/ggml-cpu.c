@@ -12,6 +12,7 @@
 #include "binary-ops.h"
 #include "vec.h"
 #include "ops.h"
+#include "ggml-profile.h"
 #include "ggml.h"
 #include "common.h"
 
@@ -2975,6 +2976,9 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             continue;
         }
 
+        // insert profiler anchor          JingliangGao 2026/03/05
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_START, node_n, state->ith);
+
         ggml_compute_forward(&params, node);
 
         if (state->ith == 0 && cplan->abort_callback &&
@@ -2983,9 +2987,15 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             tp->ec    = GGML_STATUS_ABORTED;
         }
 
+        // insert profiler anchor          JingliangGao 2026/03/05
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_SYNC, node_n, state->ith);
+
         if (node_n + 1 < cgraph->n_nodes) {
             ggml_barrier(state->threadpool);
         }
+        
+        // insert profiler anchor          JingliangGao 2026/03/05
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
     }
 
 #ifdef GGML_USE_OPENMP
@@ -3224,6 +3234,9 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     int n_threads                               = cplan->n_threads;
     struct ggml_threadpool * threadpool = cplan->threadpool;
 
+    // insert profiler anchor         JingliangGao 2026/03/05
+    ggml_graph_profile_start(cgraph, n_threads);
+
     bool disposable_threadpool = false;
 
     if (threadpool == NULL) {
@@ -3281,6 +3294,9 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
 
     // don't leave affinity set on the main thread
     clear_numa_thread_affinity();
+
+    // insert profiler anchor         JingliangGao 2026/03/05
+    ggml_graph_profile_finish(cgraph, n_threads);
 
     enum ggml_status ret = threadpool->ec;
 
