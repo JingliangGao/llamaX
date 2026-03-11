@@ -8,6 +8,11 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     add_compile_definitions($<$<CONFIG:Debug>:_GLIBCXX_ASSERTIONS>)
 endif()
 
+# add compile definitions for graph profiler      JingliangGao 2026/03/05
+if (GGML_GRAPH_PROFILER)
+    add_compile_definitions(GGML_GRAPH_PROFILER)
+endif()
+
 if (NOT MSVC)
     if (GGML_SANITIZE_THREAD)
         add_compile_options(-fsanitize=thread)
@@ -189,6 +194,7 @@ if (GGML_BACKEND_DL AND NOT BUILD_SHARED_LIBS)
     message(FATAL_ERROR "GGML_BACKEND_DL requires BUILD_SHARED_LIBS")
 endif()
 
+# add 'ggml-profile.h/.cpp' to the base library       JingliangGao 2026/03/05
 add_library(ggml-base
             ../include/ggml.h
             ../include/ggml-alloc.h
@@ -205,6 +211,8 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
+            ggml-profile.h
+            ggml-profile.cpp
             gguf.cpp)
 
 set_target_properties(ggml-base PROPERTIES
