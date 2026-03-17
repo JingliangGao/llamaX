@@ -35,6 +35,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <stdatomic.h>
 #if defined(__gnu_linux__)
 #include <syscall.h>
 #endif
@@ -72,6 +73,7 @@
 
 #define UNUSED GGML_UNUSED
 #define SWAP(x, y, T) do { T SWAP = x; (x) = y; (y) = SWAP; } while (0)
+
 
 // precomputed f32 table for f16 (256 KB) (simd-mappings.h)
 float ggml_table_f32_f16[1 << 16];
@@ -478,6 +480,57 @@ struct ggml_threadpool {
 
     enum ggml_status ec;
 };
+
+static atomic_uint_fast64_t start_clock_us;
+static FILE * g_performance_log_csv = NULL;
+
+static inline void write_time(const char * op_name) {
+    const uint64_t end_time_us = ggml_time_us();
+    const uint64_t start_time_us = atomic_load(&start_clock_us);
+    const uint64_t duration_us = end_time_us - start_time_us;
+
+    if (g_performance_log_csv) {
+        fprintf(g_performance_log_csv, "%s,%.4f\n", op_name, duration_us / 1000.0);
+        fflush(g_performance_log_csv);
+    }
+    atomic_store(&start_clock_us, ggml_time_us());
+}
+
+static inline void write_barrier(struct ggml_threadpool * tp) {
+    // int n_threads = atomic_load_explicit(&tp->n_threads_cur, memory_order_relaxed);
+    int n_threads = tp->n_threads;
+    if (n_threads == 1) {
+        return;
+    }
+
+#ifdef GGML_USE_OPENMP
+    #pragma omp barrier
+#else
+    int n_passed = atomic_load_explicit(&tp->n_barrier_passed, memory_order_relaxed);
+
+    // enter barrier (full seq-cst fence)
+    int n_barrier = atomic_fetch_add_explicit(&tp->n_barrier, 1, memory_order_seq_cst);
+
+    if (n_barrier == (n_threads - 1)) {
+        atomic_store_explicit(&tp->n_barrier, 0, memory_order_relaxed);
+        atomic_fetch_add_explicit(&tp->n_barrier_passed, 1, memory_order_seq_cst);
+        return;
+    }
+
+    // wait for other threads
+    while (atomic_load_explicit(&tp->n_barrier_passed, memory_order_relaxed) == n_passed) {
+        ggml_thread_cpu_relax();
+    }
+
+    // exit barrier (full seq-cst fence)
+    // TSAN doesn't support standalone fence yet, we use a dummy read-modify-write instead
+    #ifdef GGML_TSAN_ENABLED
+    atomic_fetch_add_explicit(&tp->n_barrier_passed, 0, memory_order_seq_cst);
+    #else
+    atomic_thread_fence(memory_order_seq_cst);
+    #endif
+#endif
+}
 
 // Per-thread state
 struct ggml_compute_state {
@@ -2993,9 +3046,17 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         if (node_n + 1 < cgraph->n_nodes) {
             ggml_barrier(state->threadpool);
         }
-        
+
+
+        if (state->ith == 0) {
+            write_time(ggml_op_name(node->op));
+        }
+        write_barrier(state->threadpool);
+
+
         // insert profiler anchor          JingliangGao 2026/03/05
         ggml_graph_profile_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
+
     }
 
 #ifdef GGML_USE_OPENMP
@@ -3005,6 +3066,10 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 #endif
 
     ggml_barrier(state->threadpool);
+
+    if (g_performance_log_csv == NULL) {
+        g_performance_log_csv = fopen("op_profiling.csv", "a");
+    }
 
     return 0;
 }

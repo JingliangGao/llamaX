@@ -7,13 +7,24 @@
 
 #include <string>
 #include <chrono>
+#include <mutex>
+#include <unordered_map>
+
 
 #ifdef GGML_GRAPH_PROFILER
+
+
 
 struct ggml_profile_output {
     const char * prefix;
     FILE *       stream;
 };
+
+// global mutex lock, used to protect file writing
+static std::mutex profile_file_mutex;
+
+// global file stream management to avoid multiple graphs opening the same file multiple times
+static std::unordered_map<std::string, FILE*> global_profile_streams;
 
 extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
 {
@@ -50,14 +61,22 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
     if (!strcmp("stderr", env) || !strcmp("1", env)) {
         out->prefix = "ggml-profile:";
         out->stream = stderr;
-        printf(">> print information ... \n");
     } else {
         out->prefix = "";
-        out->stream = fopen(env, "w");
-        printf(">> write file ... \n");
+        // check if file is open
+        auto it = global_profile_streams.find(env);
+        if (it != global_profile_streams.end()) {
+            out->stream = it->second;
+        } else {
+            out->stream = fopen(env, "w");
+            if (out->stream) {
+                global_profile_streams[env] = out->stream;
+            }
+        }
     }
 
 }
+
 
 extern "C" void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads)
 {
@@ -67,7 +86,7 @@ extern "C" void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads)
 
 static inline int ggml_profile_format_tensor_dims(char *str, struct ggml_tensor *t)
 {
-    return sprintf(str, "%ld:%ld:%ld:%ld",
+    return sprintf(str, "(%ld,%ld,%ld,%ld)",
         (long) t->ne[0], (long) t->ne[1], (long) t->ne[2], (long) t->ne[3]);
 }
 
@@ -132,28 +151,37 @@ static inline void ggml_profile_format_op_names(char *str, const struct ggml_ten
     p += sprintf(p, "%s", t->name);
 }
 
-
 extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
 {
     if (!cg->prof) { return; }
 
     ggml_profile_output *out = cg->prof->output;
 
-    fprintf(out->stream, "%s| node idx | op name | proc (nsec) | sync (nsec) | total (nsec) | op dims | op types | tensor names |\n", out->prefix);
-    fprintf(out->stream, "%s| -------: | :------ | ----------: | ----------: | -----------: | ------: | -------: | -----------: |\n", out->prefix);
+    uint64_t pid = GetPid();
+    uint64_t tid_base = GetTid();
 
     char dims[64 * GGML_MAX_SRC];
     char types[16 * GGML_MAX_SRC];
     char names[128 * GGML_MAX_SRC];
 
+    // use a buffer to collect all outputs, avoiding multiple file writes
+    std::string output_buffer;
+
     for (int i = 0; i < cg->n_nodes; i++) {
         uint64_t p_nsec = 0;
         uint64_t s_nsec = 0;
         uint64_t t_nsec = 0;
+        uint64_t p_nsec_stamp = 0;
 
         // add up per thread counters and reset them
         for (int t=0; t < n_threads; t++) {
             ggml_profile_timing &timing = cg->prof->timing[i][t];
+
+            // accquire time start stamp            JingliangGao 2026/03/16
+            if (t == 0) {
+                ggml_profile_timing &timing_start = cg->prof->timing[i][0];
+                p_nsec_stamp = timing_start.nsec[GGML_PROF_OP_START];
+            }
 
             p_nsec += timing.nsec[GGML_PROF_OP_SYNC] - timing.nsec[GGML_PROF_OP_START];
             s_nsec += timing.nsec[GGML_PROF_OP_END]  - timing.nsec[GGML_PROF_OP_SYNC];
@@ -168,12 +196,36 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         ggml_profile_format_op_types(types, cg->nodes[i]);
         ggml_profile_format_op_names(names, cg->nodes[i]);
 
-        fprintf(out->stream, "%s| %04d | %10s | %10lu | %10lu | %10lu | %46s | %22s | %20s |\n", out->prefix,
-            i, ggml_op_name(cg->nodes[i]->op),
-            (unsigned long) p_nsec, (unsigned long) s_nsec, (unsigned long) t_nsec,
-            dims, types, names);
+        // create JSON string
+        char buf[512];
+
+        int len = snprintf(
+            buf, sizeof(buf),
+            "\n{\n"
+            "  \"ph\": \"X\", \"cat\": \"Trace\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
+            "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu\n"
+            "},",
+            ggml_op_name(cg->nodes[i]->op),
+            (unsigned long long)pid,
+            (unsigned long long)(tid_base + i),
+            (unsigned long long)(p_nsec_stamp / 1000),
+            (unsigned long long)(p_nsec_stamp % 1000),
+            (unsigned long long)(t_nsec / 1000),
+            (unsigned long long)(t_nsec % 1000)
+        );
+
+        // add into buffer
+        output_buffer.append(buf, len);
     }
-    fprintf(out->stream, "%s   \n", out->prefix); // empty line to split tables
+
+    // add trailing newline
+    output_buffer += "\n";
+
+    // use a mutex to protect file writes and prevent concurrent writes from multiple threads
+    {
+        std::lock_guard<std::mutex> lock(profile_file_mutex);
+        fwrite(output_buffer.c_str(), 1, output_buffer.size(), out->stream);
+    }
 }
 
 extern "C" void ggml_graph_profile_free(struct ggml_cgraph *cg)
@@ -181,9 +233,8 @@ extern "C" void ggml_graph_profile_free(struct ggml_cgraph *cg)
     if (!cg->prof) { return; }
 
     ggml_profile_output *out = cg->prof->output;
-    if (out->stream != stderr) {
-        fclose(out->stream);
-    }
+    // 不关闭全局管理的stream，让它们在程序结束时自动关闭
+    // 或者可以添加引用计数，但为了简单，这里不关闭
 
     free(cg->prof); cg->prof = nullptr;
 }

@@ -1,8 +1,40 @@
 #pragma once
 
 #include "ggml-impl.h"
-
+#include <stdint.h>
+#include <unistd.h>
+#include <sys/syscall.h>
 // GGML internal header
+
+#ifdef __cplusplus
+#define GGML_THREAD_LOCAL thread_local
+#else
+#define GGML_THREAD_LOCAL _Thread_local
+#endif
+
+static inline uint64_t GetTid(void)
+{
+    static GGML_THREAD_LOCAL uint64_t tid = 0;
+
+    if (tid == 0) {
+        tid = (uint64_t)syscall(SYS_gettid);
+    }
+
+    return tid;
+}
+
+static inline uint64_t GetPid(void)
+{
+    static GGML_THREAD_LOCAL uint64_t pid = 0;
+
+    if (pid == 0) {
+        pid = (uint64_t)getpid();
+    }
+
+    return pid;
+}
+
+
 
 #ifdef __cplusplus
 extern "C" {
