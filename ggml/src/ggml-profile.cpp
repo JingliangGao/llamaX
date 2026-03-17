@@ -9,11 +9,43 @@
 #include <chrono>
 #include <mutex>
 #include <unordered_map>
+#include <chrono>
+
+// std::chrono header start
+#ifdef _GLIBCXX_USE_C99_STDINT_TR1
+#define _GLIBCXX_CHRONO_INT64_T int64_t
+#elif defined __INT64_TYPE__
+#define _GLIBCXX_CHRONO_INT64_T __INT64_TYPE__
+#else
+#define _GLIBCXX_CHRONO_INT64_T long long
+#endif
+// std::chrono header end
+
+using _trimonths = std::chrono::duration<_GLIBCXX_CHRONO_INT64_T, std::ratio<7889238>>;
+#undef _GLIBCXX_CHRONO_INT64_T
+
+template <class ClockT>
+static inline int64_t timeSinceEpoch(const std::chrono::time_point<ClockT>& t) {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+}
+
+class ChromeTraceBaseTime {
+ public:
+  ChromeTraceBaseTime() = default;
+  static ChromeTraceBaseTime& singleton();
+  void init() {
+    get();
+  }
+  int64_t get() {
+    // Make all timestamps relative to 3 month intervals.
+    static int64_t base_time = timeSinceEpoch(std::chrono::time_point<std::chrono::system_clock>(
+        std::chrono::floor<_trimonths>(std::chrono::system_clock::now())));
+    return base_time;
+  }
+};
 
 
 #ifdef GGML_GRAPH_PROFILER
-
-
 
 struct ggml_profile_output {
     const char * prefix;
@@ -25,6 +57,20 @@ static std::mutex profile_file_mutex;
 
 // global file stream management to avoid multiple graphs opening the same file multiple times
 static std::unordered_map<std::string, FILE*> global_profile_streams;
+
+// epoch index
+static int64_t graph_index = 0;
+
+ChromeTraceBaseTime& ChromeTraceBaseTime::singleton() {
+  static ChromeTraceBaseTime instance;
+  return instance;
+}
+
+
+inline uint64_t transToRelativeTime(int64_t time) {
+  int64_t res = time - ChromeTraceBaseTime::singleton().get();
+  return res > 0 ? (uint64_t)res : 0;
+}
 
 extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
 {
@@ -171,7 +217,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         uint64_t p_nsec = 0;
         uint64_t s_nsec = 0;
         uint64_t t_nsec = 0;
-        uint64_t p_nsec_stamp = 0;
+        uint64_t time_stamp = 0;
 
         // add up per thread counters and reset them
         for (int t=0; t < n_threads; t++) {
@@ -180,7 +226,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
             // accquire time start stamp            JingliangGao 2026/03/16
             if (t == 0) {
                 ggml_profile_timing &timing_start = cg->prof->timing[i][0];
-                p_nsec_stamp = timing_start.nsec[GGML_PROF_OP_START];
+                time_stamp = transToRelativeTime(timing_start.nsec[GGML_PROF_OP_START]);
             }
 
             p_nsec += timing.nsec[GGML_PROF_OP_SYNC] - timing.nsec[GGML_PROF_OP_START];
@@ -207,16 +253,19 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
             "},",
             ggml_op_name(cg->nodes[i]->op),
             (unsigned long long)pid,
-            (unsigned long long)(tid_base + i),
-            (unsigned long long)(p_nsec_stamp / 1000),
-            (unsigned long long)(p_nsec_stamp % 1000),
+            (unsigned long long)graph_index,
+            (unsigned long long)(time_stamp / 1000),
+            (unsigned long long)(time_stamp % 1000),
             (unsigned long long)(t_nsec / 1000),
             (unsigned long long)(t_nsec % 1000)
         );
 
         // add into buffer
         output_buffer.append(buf, len);
+
     }
+
+    graph_index ++;
 
     // add trailing newline
     output_buffer += "\n";
@@ -233,8 +282,9 @@ extern "C" void ggml_graph_profile_free(struct ggml_cgraph *cg)
     if (!cg->prof) { return; }
 
     ggml_profile_output *out = cg->prof->output;
-    // 不关闭全局管理的stream，让它们在程序结束时自动关闭
-    // 或者可以添加引用计数，但为了简单，这里不关闭
+    if (out->stream != stderr) {
+        fclose(out->stream);
+    }
 
     free(cg->prof); cg->prof = nullptr;
 }

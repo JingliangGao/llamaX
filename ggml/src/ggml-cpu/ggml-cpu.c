@@ -3047,13 +3047,6 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             ggml_barrier(state->threadpool);
         }
 
-
-        if (state->ith == 0) {
-            write_time(ggml_op_name(node->op));
-        }
-        write_barrier(state->threadpool);
-
-
         // insert profiler anchor          JingliangGao 2026/03/05
         ggml_graph_profile_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
 
@@ -3066,10 +3059,6 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 #endif
 
     ggml_barrier(state->threadpool);
-
-    if (g_performance_log_csv == NULL) {
-        g_performance_log_csv = fopen("op_profiling.csv", "a");
-    }
 
     return 0;
 }
