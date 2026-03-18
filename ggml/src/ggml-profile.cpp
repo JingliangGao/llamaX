@@ -254,7 +254,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
             "  \"ph\": \"X\", \"cat\": \"cpu_op\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
             "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu,\n"
             "  \"args\": {\n"
-            "   \"dims\": \"%s\", \"types\": \"%s\", \"names\": \"%s\"\n"
+            "   \"op dims\": \"%s\", \"op types\": \"%s\", \"tensor names\": \"%s\"\n"
             "  }\n"
             "},",
             ggml_op_name(cg->nodes[i]->op),
