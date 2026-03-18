@@ -238,6 +238,9 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
             timing.nsec[GGML_PROF_OP_END]   = 0;
         }
 
+        // skip ops with no time recorded (e.g. optimized out)
+        if (t_nsec == 0) { continue; }
+
         ggml_profile_format_op_dims(dims, cg->nodes[i]);
         ggml_profile_format_op_types(types, cg->nodes[i]);
         ggml_profile_format_op_names(names, cg->nodes[i]);
@@ -248,8 +251,11 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         int len = snprintf(
             buf, sizeof(buf),
             "\n{\n"
-            "  \"ph\": \"X\", \"cat\": \"Trace\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
-            "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu\n"
+            "  \"ph\": \"X\", \"cat\": \"cpu_op\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
+            "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu,\n"
+            "  \"args\": {\n"
+            "   \"dims\": \"%s\", \"types\": \"%s\", \"names\": \"%s\"\n"
+            "  }\n"
             "},",
             ggml_op_name(cg->nodes[i]->op),
             (unsigned long long)pid,
@@ -257,7 +263,8 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
             (unsigned long long)(time_stamp / 1000),
             (unsigned long long)(time_stamp % 1000),
             (unsigned long long)(t_nsec / 1000),
-            (unsigned long long)(t_nsec % 1000)
+            (unsigned long long)(t_nsec % 1000),
+            dims, types, names
         );
 
         // add into buffer
