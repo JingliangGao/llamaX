@@ -11,6 +11,35 @@
 #include <unordered_map>
 #include <chrono>
 
+static std::string global_profile_buffer;
+static bool global_profile_started = false;
+static std::mutex global_profile_mutex;
+static int profile_ref_count = 0;
+static std::unordered_map<std::string, FILE*> global_profile_streams;
+
+class ProfileWriter {
+public:
+    ~ProfileWriter() {
+        if (global_profile_started) {
+            std::lock_guard<std::mutex> lock(global_profile_mutex);
+            // remove trailing comma
+            if (!global_profile_buffer.empty() && global_profile_buffer.back() == ',') {
+                global_profile_buffer.pop_back();
+            }
+            global_profile_buffer += "]";
+            for (auto& p : global_profile_streams) {
+                if (p.second != stderr) {
+                    fwrite(global_profile_buffer.c_str(), 1, global_profile_buffer.size(), p.second);
+                }
+            }
+            global_profile_buffer = "";
+            global_profile_started = false;
+        }
+    }
+};
+
+static ProfileWriter profile_writer;
+
 // std::chrono header start
 #ifdef _GLIBCXX_USE_C99_STDINT_TR1
 #define _GLIBCXX_CHRONO_INT64_T int64_t
@@ -55,10 +84,7 @@ struct ggml_profile_output {
 // global mutex lock, used to protect file writing
 static std::mutex profile_file_mutex;
 
-// global file stream management to avoid multiple graphs opening the same file multiple times
-static std::unordered_map<std::string, FILE*> global_profile_streams;
-
-// epoch index
+// graph index
 static int64_t graph_index = 0;
 
 ChromeTraceBaseTime& ChromeTraceBaseTime::singleton() {
@@ -76,6 +102,7 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
 {
     // TODO: make this a param
     const char *env = getenv("GGML_GRAPH_PROFILE");
+
     if (!env) { return; }
 
     // The number of threads may change between passes (pp vs tg).
@@ -121,6 +148,12 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
         }
     }
 
+    profile_ref_count++;
+    if (!global_profile_started) {
+        global_profile_buffer = "[";
+        global_profile_started = true;
+    }
+
 }
 
 
@@ -132,7 +165,7 @@ extern "C" void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads)
 
 static inline int ggml_profile_format_tensor_dims(char *str, struct ggml_tensor *t)
 {
-    return sprintf(str, "(%ld,%ld,%ld,%ld)",
+    return sprintf(str, "[%ld,%ld,%ld,%ld]",
         (long) t->ne[0], (long) t->ne[1], (long) t->ne[2], (long) t->ne[3]);
 }
 
@@ -204,7 +237,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
     ggml_profile_output *out = cg->prof->output;
 
     uint64_t pid = GetPid();
-    uint64_t tid_base = GetTid();
+    // uint64_t tid_base = GetTid();
 
     char dims[64 * GGML_MAX_SRC];
     char types[16 * GGML_MAX_SRC];
@@ -269,18 +302,11 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
 
         // add into buffer
         output_buffer.append(buf, len);
-
     }
 
-    graph_index ++;
-
-    // add trailing newline
-    output_buffer += "\n";
-
-    // use a mutex to protect file writes and prevent concurrent writes from multiple threads
     {
-        std::lock_guard<std::mutex> lock(profile_file_mutex);
-        fwrite(output_buffer.c_str(), 1, output_buffer.size(), out->stream);
+        std::lock_guard<std::mutex> lock(global_profile_mutex);
+        global_profile_buffer += output_buffer;
     }
 }
 
@@ -291,6 +317,12 @@ extern "C" void ggml_graph_profile_free(struct ggml_cgraph *cg)
     ggml_profile_output *out = cg->prof->output;
     if (out->stream != stderr) {
         fclose(out->stream);
+    }
+
+    profile_ref_count--;
+    if (profile_ref_count == 0) {
+        global_profile_buffer = "";
+        global_profile_started = false;
     }
 
     free(cg->prof); cg->prof = nullptr;
