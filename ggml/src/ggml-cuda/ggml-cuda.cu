@@ -1,6 +1,7 @@
 #include "ggml-cuda.h"
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
+#include "ggml-profile.h"
 
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/acc.cuh"
@@ -62,6 +63,7 @@
 #include "ggml-cuda/cumsum.cuh"
 #include "ggml-cuda/fill.cuh"
 #include "ggml.h"
+#include "ggml-profile.h"
 
 #include <algorithm>
 #include <array>
@@ -4026,15 +4028,24 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 GGML_UNUSED(integrated);
 #endif  // NDEBUG
 
+                // insert profiler anchor          JingliangGao 2026/03/19
+                ggml_graph_profile_event(cgraph, GGML_PROF_OP_START, i, 0);
+
                 bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
                 if (!ok) {
                     GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
                 }
                 GGML_ASSERT(ok);
 
+                // insert profiler anchor          JingliangGao 2026/03/19
+                ggml_graph_profile_event(cgraph, GGML_PROF_OP_SYNC, i, 0);
+
                 if (!is_concurrent_event_active) {
                     try_launch_concurrent_event(node);
                }
+
+                // insert profiler anchor          JingliangGao 2026/03/19
+                ggml_graph_profile_event(cgraph, GGML_PROF_OP_END, i, 0);
             }
         }
 
@@ -4067,7 +4078,17 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
             ggml_cuda_graph_update_executable(cuda_ctx, graph_key);
         }
         // Launch graph
+        // insert profiler anchor          JingliangGao 2026/03/19
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            ggml_graph_profile_event(cgraph, GGML_PROF_OP_START, i, 0);
+        }
         CUDA_CHECK(cudaGraphLaunch(graph->instance, cuda_ctx->stream()));
+
+        // insert profiler anchor          JingliangGao 2026/03/19
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            ggml_graph_profile_event(cgraph, GGML_PROF_OP_SYNC, i, 0);
+            ggml_graph_profile_event(cgraph, GGML_PROF_OP_END, i, 0);
+        }
 #else
         GGML_UNUSED(graph_key);
         graph_evaluated_or_captured = true;
@@ -4096,6 +4117,9 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
 
     ggml_cuda_set_device(cuda_ctx->device);
+
+    ggml_graph_profile_start(cgraph, 1, "cuda_op");
+
 
     bool use_cuda_graph             = false;
     bool cuda_graph_update_required = false;
@@ -4147,6 +4171,8 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
     }
 
     ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required, graph_key);
+
+    ggml_graph_profile_finish(cgraph, 1);
 
     return GGML_STATUS_SUCCESS;
 }

@@ -35,6 +35,16 @@ static inline uint64_t GetPid(void)
 }
 
 
+static inline uint64_t hash_fnv1a(const char *str) {
+    uint64_t h = 1469598103934665603ULL;
+    while (*str) {
+        h ^= (unsigned char)(*str++);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -76,16 +86,19 @@ static inline struct ggml_profile_timing * ggml_graph_profile_timing(const struc
 
 // Stub out all profiler functions
 
-static inline void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
+
+static inline void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads, const char * graph_name)
 {
     GGML_UNUSED(cg);
     GGML_UNUSED(n_threads);
+    GGML_UNUSED(graph_name);
 }
 
-static inline void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads)
+static inline void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads, const char * graph_name)
 {
     GGML_UNUSED(cg);
     GGML_UNUSED(n_threads);
+    GGML_UNUSED(graph_name);
 }
 
 static inline void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
@@ -109,8 +122,8 @@ static inline void ggml_graph_profile_event(const struct ggml_cgraph *cg, enum g
 
 #else
 
-void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads);
-void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads);
+void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads, const char * graph_name);
+void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads, const char * graph_name);
 void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads);
 void ggml_graph_profile_free(struct ggml_cgraph *cg);
 void ggml_graph_profile_event(const struct ggml_cgraph *cg, enum ggml_profile_event e, int node_n, int ith);

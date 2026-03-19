@@ -78,14 +78,11 @@ class ChromeTraceBaseTime {
 
 struct ggml_profile_output {
     const char * prefix;
-    FILE *       stream;
+    FILE * stream;
 };
 
 // global mutex lock, used to protect file writing
 static std::mutex profile_file_mutex;
-
-// graph index
-static int64_t graph_index = 0;
 
 ChromeTraceBaseTime& ChromeTraceBaseTime::singleton() {
   static ChromeTraceBaseTime instance;
@@ -98,7 +95,7 @@ inline uint64_t transToRelativeTime(int64_t time) {
   return res > 0 ? (uint64_t)res : 0;
 }
 
-extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
+extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads, const char * graph_name)
 {
     // TODO: make this a param
     const char *env = getenv("GGML_GRAPH_PROFILE");
@@ -132,10 +129,10 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
     // init the output
     ggml_profile_output *out = cg->prof->output;
     if (!strcmp("stderr", env) || !strcmp("1", env)) {
-        out->prefix = "ggml-profile:";
+        out->prefix = "unknown";
         out->stream = stderr;
     } else {
-        out->prefix = "";
+        out->prefix = graph_name;
         // check if file is open
         auto it = global_profile_streams.find(env);
         if (it != global_profile_streams.end()) {
@@ -157,9 +154,9 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads)
 }
 
 
-extern "C" void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads)
+extern "C" void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads, const char * graph_name)
 {
-    if (!cg->prof) { ggml_graph_profile_init(cg, n_threads); }
+    if (!cg->prof) { ggml_graph_profile_init(cg, n_threads, graph_name); }
     if (!cg->prof) { return; }
 }
 
@@ -234,10 +231,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
 {
     if (!cg->prof) { return; }
 
-    ggml_profile_output *out = cg->prof->output;
-
-    uint64_t pid = GetPid();
-    // uint64_t tid_base = GetTid();
+    // ggml_profile_output *out = cg->prof->output;
 
     char dims[64 * GGML_MAX_SRC];
     char types[16 * GGML_MAX_SRC];
@@ -251,6 +245,8 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         uint64_t s_nsec = 0;
         uint64_t t_nsec = 0;
         uint64_t time_stamp = 0;
+        uint64_t pid = GetPid();
+        // uint64_t tid = GetTid();
 
         // add up per thread counters and reset them
         for (int t=0; t < n_threads; t++) {
@@ -284,15 +280,16 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         int len = snprintf(
             buf, sizeof(buf),
             "\n{\n"
-            "  \"ph\": \"X\", \"cat\": \"cpu_op\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
+            "  \"ph\": \"X\", \"cat\": \"%s\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
             "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu,\n"
             "  \"args\": {\n"
             "   \"op dims\": \"%s\", \"op types\": \"%s\", \"tensor names\": \"%s\"\n"
             "  }\n"
             "},",
+            cg->prof->output->prefix,
             ggml_op_name(cg->nodes[i]->op),
             (unsigned long long)pid,
-            (unsigned long long)graph_index,
+            (unsigned long long)hash_fnv1a(cg->prof->output->prefix),
             (unsigned long long)(time_stamp / 1000),
             (unsigned long long)(time_stamp % 1000),
             (unsigned long long)(t_nsec / 1000),

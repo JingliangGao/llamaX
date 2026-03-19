@@ -3295,7 +3295,7 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     struct ggml_threadpool * threadpool = cplan->threadpool;
 
     // insert profiler anchor         JingliangGao 2026/03/05
-    ggml_graph_profile_start(cgraph, n_threads);
+    ggml_graph_profile_start(cgraph, n_threads, "host_op");
 
     bool disposable_threadpool = false;
 
