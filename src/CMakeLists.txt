@@ -150,7 +150,7 @@ add_library(llama
             models/xverse.cpp
             )
 
-// add graph-profiler into llama       JingliangGao 2026/03/24
+# add graph-profiler into llama       JingliangGao 2026/03/24
 if (GGML_GRAPH_PROFILER)
     message("[INFO]: Graph profiler enabled for llama library instrumentation")
 

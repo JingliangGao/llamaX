@@ -11,6 +11,8 @@
 #include <mutex>
 #include <unordered_map>
 #include <chrono>
+#include <cxxabi.h>
+#include <stdlib.h>
 
 #define CACHE_SIZE 81920   /* Size : 8192 : 128k, 81920 : 1 M */
 
@@ -373,6 +375,18 @@ static const char *lookup_symbol(void *fn) {
 }
 
 __attribute__((no_instrument_function))
+static const char *demangle(const char *name) {
+    int status = 0;
+    char *demangled = abi::__cxa_demangle(name, NULL, NULL, &status);
+
+    if (status == 0 && demangled) {
+        return demangled;
+    }
+
+    return name;
+}
+
+__attribute__((no_instrument_function))
 static const char *resolve_symbol(void *fn) {
     const char *name = lookup_symbol(fn);
     if (name) {
@@ -381,21 +395,29 @@ static const char *resolve_symbol(void *fn) {
 
     Dl_info info;
     if (dladdr(fn, &info) && info.dli_sname) {
+        const char *final_name = info.dli_sname;
+
+        // demangle
+        char *demangled = abi::__cxa_demangle(info.dli_sname, NULL, NULL, NULL);
+        if (demangled) {
+            final_name = demangled;
+        }
 
         if (g_cache_count < CACHE_SIZE) {
             g_cache[g_cache_count].addr = fn;
-            g_cache[g_cache_count].name = info.dli_sname;
+            g_cache[g_cache_count].name = final_name;
             g_cache_count++;
         }
 
-        if (strstr(info.dli_sname, "ggml") ||
-            strstr(info.dli_sname, "llama")) {
-            return info.dli_sname;
+        if (strstr(final_name, "ggml") ||
+            strstr(final_name, "llama")) {
+            return final_name;
         }
     }
 
     return NULL;
 }
+
 
 extern "C" __attribute__((no_instrument_function))
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
