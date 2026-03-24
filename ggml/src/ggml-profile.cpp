@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <dlfcn.h>
 
 #include <string>
 #include <chrono>
@@ -11,11 +12,21 @@
 #include <unordered_map>
 #include <chrono>
 
+#define CACHE_SIZE 81920   /* Size : 8192 : 128k, 81920 : 1 M */
+
 static std::string global_profile_buffer;
 static bool global_profile_started = false;
 static std::mutex global_profile_mutex;
 static int profile_ref_count = 0;
 static std::unordered_map<std::string, FILE*> global_profile_streams;
+
+__attribute__((no_instrument_function))
+static inline uint64_t get_time_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+}
+
 
 class ProfileWriter {
 public:
@@ -99,7 +110,6 @@ extern "C" void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads, c
 {
     // TODO: make this a param
     const char *env = getenv("GGML_GRAPH_PROFILE");
-
     if (!env) { return; }
 
     // The number of threads may change between passes (pp vs tg).
@@ -231,8 +241,6 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
 {
     if (!cg->prof) { return; }
 
-    // ggml_profile_output *out = cg->prof->output;
-
     char dims[64 * GGML_MAX_SRC];
     char types[16 * GGML_MAX_SRC];
     char names[128 * GGML_MAX_SRC];
@@ -246,7 +254,7 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         uint64_t t_nsec = 0;
         uint64_t time_stamp = 0;
         uint64_t pid = GetPid();
-        // uint64_t tid = GetTid();
+        uint64_t tid = GetTid();
 
         // add up per thread counters and reset them
         for (int t=0; t < n_threads; t++) {
@@ -280,20 +288,22 @@ extern "C" void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads)
         int len = snprintf(
             buf, sizeof(buf),
             "\n{\n"
-            "  \"ph\": \"X\", \"cat\": \"%s\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
+            "  \"ph\": \"X\", \"cat\": \"%s\", \"name\": \"%s\", \"pid\": %llu, \"tid\": \"%s\",\n"
             "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu,\n"
             "  \"args\": {\n"
+            "   \"pid\": %llu, \"tid\": %llu,\n"
             "   \"op dims\": \"%s\", \"op types\": \"%s\", \"tensor names\": \"%s\"\n"
             "  }\n"
             "},",
             cg->prof->output->prefix,
             ggml_op_name(cg->nodes[i]->op),
             (unsigned long long)pid,
-            (unsigned long long)hash_fnv1a(cg->prof->output->prefix),
+            cg->prof->output->prefix,
             (unsigned long long)(time_stamp / 1000),
             (unsigned long long)(time_stamp % 1000),
             (unsigned long long)(t_nsec / 1000),
             (unsigned long long)(t_nsec % 1000),
+            (unsigned long long)pid, (unsigned long long)tid,
             dims, types, names
         );
 
@@ -329,10 +339,142 @@ extern "C" void ggml_graph_profile_event(const struct ggml_cgraph *cg, enum ggml
 {
     if (!cg->prof) { return; }
 
-    using clock = std::chrono::high_resolution_clock;
-
     ggml_profile_timing &timing = cg->prof->timing[node_n][ith];
-    timing.nsec[e] = std::chrono::nanoseconds(clock::now().time_since_epoch()).count();
+    timing.nsec[e] = get_time_ns();
+}
+
+
+/* func: cache all functions {'pointer' : name} */
+typedef struct {
+    void *addr;
+    const char *name;
+} cache_entry;
+
+/* func: cache ggml-/llama- functions {'pointer' : start_time} */
+typedef struct {
+    void *fn;
+    uint64_t start_time;
+} stack_entry;
+
+static cache_entry g_cache[CACHE_SIZE];                 /* SIZE = 16 Byte * CACHE_SIZE */
+static stack_entry g_stack[int(CACHE_SIZE * 0.25)];     /* SIZE = 16 Byte * (CACHE_SIZE * 0.25) */
+static int g_stack_top = 0;
+static int g_cache_count = 0;
+
+static int DL_time = 0;
+static int find_func_time = 0;
+static int lookup_time = 0;
+
+/* linear search */
+__attribute__((no_instrument_function))
+static const char *lookup_symbol(void *fn) {
+    for (int i = 0; i < g_cache_count; i++) {
+        if (g_cache[i].addr == fn) {
+            return g_cache[i].name;
+        }
+    }
+    return NULL;
+}
+
+__attribute__((no_instrument_function))
+static const char *resolve_symbol(void *fn) {
+    auto start = std::chrono::high_resolution_clock::now();
+    const char *name = lookup_symbol(fn);
+    if (name) {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        lookup_time += duration;
+        return name;
+    }
+
+    auto dl_start = std::chrono::high_resolution_clock::now();
+    Dl_info info;
+    if (dladdr(fn, &info) && info.dli_sname) {
+        auto dl_end = std::chrono::high_resolution_clock::now();
+        auto dl_duration = std::chrono::duration_cast<std::chrono::microseconds>(dl_end - dl_start).count();
+        DL_time += dl_duration;
+
+        if (g_cache_count < CACHE_SIZE) {
+            g_cache[g_cache_count].addr = fn;
+            g_cache[g_cache_count].name = info.dli_sname;
+            g_cache_count++;
+        }
+
+        if (strstr(info.dli_sname, "ggml") ||
+            strstr(info.dli_sname, "llama")) {
+
+            auto end = std::chrono::high_resolution_clock::now();
+            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - dl_end).count();
+            find_func_time += total_duration;
+
+            return info.dli_sname;
+        }
+    }
+
+    return NULL;
+}
+
+extern "C" __attribute__((no_instrument_function))
+void __cyg_profile_func_enter(void *this_fn, void *call_site) {
+    (void)call_site;
+
+
+    const char *name = resolve_symbol(this_fn);
+    if (!name) return;
+
+    /* push {'pointer' : start_time} into stack */
+    if (g_stack_top < int(CACHE_SIZE * 0.25)) {
+        g_stack[g_stack_top].fn = this_fn;
+        g_stack[g_stack_top].start_time = get_time_ns();
+        g_stack_top++;
+    }
+
+}
+
+extern "C" __attribute__((no_instrument_function))
+void __cyg_profile_func_exit(void *this_fn, void *call_site) {
+    (void)call_site;
+
+    // parse func name from pointer
+    const char *name = resolve_symbol(this_fn);
+    if (!name) return;
+
+    if (g_stack_top <= 0) return;
+    g_stack_top--;
+    stack_entry *entry = &g_stack[g_stack_top];
+
+    uint64_t end = get_time_ns();
+    uint64_t duration = end - entry->start_time;
+    uint64_t pid = GetPid();
+    uint64_t tid = GetTid();
+    uint64_t time_stamp = transToRelativeTime(entry->start_time);
+
+    // create JSON string
+    std::string output_buffer;
+    char buf[512];
+
+    int len = snprintf(
+        buf, sizeof(buf),
+        "\n{\n"
+        "  \"ph\": \"X\", \"cat\": \"%s\", \"name\": \"%s\", \"pid\": %llu, \"tid\": %llu,\n"
+        "  \"ts\": %llu.%03llu, \"dur\": %llu.%03llu , \n"
+        "  \"args\": {\n"
+        "   \"pid\": %llu, \"tid\": %llu \n"
+        "  }\n"
+        "},",
+        "call_stack",
+        name,
+        (unsigned long long)(0),
+        (unsigned long long)(tid),
+        (unsigned long long)(time_stamp / 1000),
+        (unsigned long long)(time_stamp % 1000),
+        (unsigned long long)(duration / 1000),
+        (unsigned long long)(duration % 1000),
+        (unsigned long long)(pid), (unsigned long long)(tid)
+    );
+
+    // add into global buffer
+    global_profile_buffer.append(buf, len);
 }
 
 #endif // GGML_GRAPH_PROFILER

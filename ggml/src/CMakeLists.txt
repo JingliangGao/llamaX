@@ -8,10 +8,7 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     add_compile_definitions($<$<CONFIG:Debug>:_GLIBCXX_ASSERTIONS>)
 endif()
 
-# add compile definitions for graph profiler      JingliangGao 2026/03/05
-if (GGML_GRAPH_PROFILER)
-    add_compile_definitions(GGML_GRAPH_PROFILER)
-endif()
+
 
 if (NOT MSVC)
     if (GGML_SANITIZE_THREAD)
@@ -250,6 +247,28 @@ target_link_libraries(ggml PUBLIC ggml-base)
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     target_link_libraries(ggml PRIVATE dl)
+endif()
+
+# add compile definitions for graph profiler      JingliangGao 2026/03/05
+if (GGML_GRAPH_PROFILER)
+    message("Graph profiler enabled, adding instrumentation flags ... ")
+    add_compile_definitions(GGML_GRAPH_PROFILER)
+    set(EXCLUDE_FILES
+        "/usr/include"
+        "/usr/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ggml-profile.cpp"
+    )
+    string(JOIN "," EXCLUDE_LIST ${EXCLUDE_FILES})
+
+    target_compile_options(ggml-base PRIVATE
+        -g
+        -finstrument-functions
+        "-finstrument-functions-exclude-file-list=${EXCLUDE_LIST}"
+        $<$<COMPILE_LANGUAGE:C>:-fno-instrument-functions>
+    )
+
+    target_link_libraries(ggml-base PRIVATE dl)
+
 endif()
 
 function(ggml_add_backend_library backend)

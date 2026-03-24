@@ -12,6 +12,7 @@
 #define GGML_THREAD_LOCAL _Thread_local
 #endif
 
+
 static inline uint64_t GetTid(void)
 {
     static GGML_THREAD_LOCAL uint64_t tid = 0;
@@ -120,6 +121,18 @@ static inline void ggml_graph_profile_event(const struct ggml_cgraph *cg, enum g
     GGML_UNUSED(ith);
 }
 
+static inline void __cyg_profile_func_enter(void *this_fn, void *call_site)
+{
+    GGML_UNUSED(this_fn);
+    GGML_UNUSED(call_site);
+}
+
+static inline void __cyg_profile_func_exit(void *this_fn, void *call_site)
+{
+    GGML_UNUSED(this_fn);
+    GGML_UNUSED(call_site);
+}
+
 #else
 
 void ggml_graph_profile_init(struct ggml_cgraph *cg, int n_threads, const char * graph_name);
@@ -127,6 +140,8 @@ void ggml_graph_profile_start(struct ggml_cgraph *cg, int n_threads, const char 
 void ggml_graph_profile_finish(struct ggml_cgraph *cg, int n_threads);
 void ggml_graph_profile_free(struct ggml_cgraph *cg);
 void ggml_graph_profile_event(const struct ggml_cgraph *cg, enum ggml_profile_event e, int node_n, int ith);
+void __cyg_profile_func_enter(void *this_fn, void *call_site);
+void __cyg_profile_func_exit(void *this_fn, void *call_site);
 
 #endif // GGML_GRAPH_PROFILER
 
