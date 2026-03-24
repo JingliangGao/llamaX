@@ -30,8 +30,8 @@
     { "name": "static",   "hidden": true, "cacheVariables": { "GGML_STATIC":      "ON" } },
     { "name": "sycl_f16", "hidden": true, "cacheVariables": { "GGML_SYCL_F16":    "ON" } },
     { "name": "vulkan",   "hidden": true, "cacheVariables": { "GGML_VULKAN":      "ON" } },
-    { "name": "profiler", "hidden": true, "cacheVariables": { "GGML_GRAPH_PROFILER":      "ON" } },
-    { "name": "profiler-cuda", "hidden": true, "cacheVariables": { "GGML_GRAPH_PROFILER":      "ON", "GGML_CUDA": "ON" } },
+    { "name": "profiler", "hidden": true, "cacheVariables": { "LLAMA_GRAPH_PROFILER":      "ON" } },
+    { "name": "profiler-cuda", "hidden": true, "cacheVariables": { "LLAMA_GRAPH_PROFILER":      "ON", "GGML_CUDA": "ON" } },
 
     {
         "name": "x64-windows-llvm", "hidden": true,

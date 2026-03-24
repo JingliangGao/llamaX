@@ -199,6 +199,7 @@ add_library(ggml-base
             ../include/ggml-cpp.h
             ../include/ggml-opt.h
             ../include/gguf.h
+            ../include/ggml-profile.h
             ggml.c
             ggml.cpp
             ggml-alloc.c
@@ -208,7 +209,6 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
-            ggml-profile.h
             ggml-profile.cpp
             gguf.cpp)
 
@@ -251,10 +251,11 @@ endif()
 
 # add compile definitions for graph profiler      JingliangGao 2026/03/05
 if (GGML_GRAPH_PROFILER)
-    message("Graph profiler enabled, adding instrumentation flags ... ")
+    message("[INFO]: Graph profiler enabled for ggml-base library instrumentation")
     add_compile_definitions(GGML_GRAPH_PROFILER)
     set(EXCLUDE_FILES
         "/usr/include"
+        "/usr/include/c++"
         "/usr/lib"
         "${CMAKE_CURRENT_SOURCE_DIR}/ggml-profile.cpp"
     )

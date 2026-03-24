@@ -361,10 +361,6 @@ static stack_entry g_stack[int(CACHE_SIZE * 0.25)];     /* SIZE = 16 Byte * (CAC
 static int g_stack_top = 0;
 static int g_cache_count = 0;
 
-static int DL_time = 0;
-static int find_func_time = 0;
-static int lookup_time = 0;
-
 /* linear search */
 __attribute__((no_instrument_function))
 static const char *lookup_symbol(void *fn) {
@@ -378,21 +374,13 @@ static const char *lookup_symbol(void *fn) {
 
 __attribute__((no_instrument_function))
 static const char *resolve_symbol(void *fn) {
-    auto start = std::chrono::high_resolution_clock::now();
     const char *name = lookup_symbol(fn);
     if (name) {
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-        lookup_time += duration;
         return name;
     }
 
-    auto dl_start = std::chrono::high_resolution_clock::now();
     Dl_info info;
     if (dladdr(fn, &info) && info.dli_sname) {
-        auto dl_end = std::chrono::high_resolution_clock::now();
-        auto dl_duration = std::chrono::duration_cast<std::chrono::microseconds>(dl_end - dl_start).count();
-        DL_time += dl_duration;
 
         if (g_cache_count < CACHE_SIZE) {
             g_cache[g_cache_count].addr = fn;
@@ -402,11 +390,6 @@ static const char *resolve_symbol(void *fn) {
 
         if (strstr(info.dli_sname, "ggml") ||
             strstr(info.dli_sname, "llama")) {
-
-            auto end = std::chrono::high_resolution_clock::now();
-            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - dl_end).count();
-            find_func_time += total_duration;
-
             return info.dli_sname;
         }
     }
@@ -417,7 +400,6 @@ static const char *resolve_symbol(void *fn) {
 extern "C" __attribute__((no_instrument_function))
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     (void)call_site;
-
 
     const char *name = resolve_symbol(this_fn);
     if (!name) return;

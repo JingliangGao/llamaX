@@ -150,6 +150,28 @@ add_library(llama
             models/xverse.cpp
             )
 
+// add graph-profiler into llama       JingliangGao 2026/03/24
+if (GGML_GRAPH_PROFILER)
+    message("[INFO]: Graph profiler enabled for llama library instrumentation")
+
+    target_compile_definitions(llama PRIVATE GGML_GRAPH_PROFILER)
+    set(EXCLUDE_FILES
+        "/usr/include"
+        "/usr/include/c++"
+        "/usr/lib"
+    )
+    string(JOIN "," EXCLUDE_LIST ${EXCLUDE_FILES})
+
+    target_compile_options(llama PRIVATE
+        -g
+        -finstrument-functions
+        "-finstrument-functions-exclude-file-list=${EXCLUDE_LIST}"
+        $<$<COMPILE_LANGUAGE:C>:-fno-instrument-functions>
+    )
+
+    target_link_libraries(llama PRIVATE dl)
+endif()
+
 set_target_properties(llama PROPERTIES
     VERSION ${LLAMA_INSTALL_VERSION}
     SOVERSION 0

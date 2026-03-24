@@ -115,6 +115,13 @@ option(LLAMA_TESTS_INSTALL  "llama: install tests"        ON)
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
 
+# profiler     JingliangGao 2026/03/24
+option(LLAMA_GRAPH_PROFILER "llama: also instrument llama code path with graph profiler hooks" OFF)
+
+if (LLAMA_GRAPH_PROFILER)
+    set(GGML_GRAPH_PROFILER ON CACHE BOOL "" FORCE)
+endif()
+
 
 # Required for relocatable CMake package
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)
