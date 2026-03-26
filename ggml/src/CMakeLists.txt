@@ -199,7 +199,6 @@ add_library(ggml-base
             ../include/ggml-cpp.h
             ../include/ggml-opt.h
             ../include/gguf.h
-            ../include/ggml-profile.h
             ggml.c
             ggml.cpp
             ggml-alloc.c
@@ -209,6 +208,7 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
+            ggml-profile.h
             ggml-profile.cpp
             gguf.cpp)
 
@@ -249,28 +249,7 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     target_link_libraries(ggml PRIVATE dl)
 endif()
 
-# add compile definitions for graph profiler      JingliangGao 2026/03/05
-if (GGML_GRAPH_PROFILER)
-    message("[INFO]: Graph profiler enabled for ggml-base library instrumentation")
-    add_compile_definitions(GGML_GRAPH_PROFILER)
-    set(EXCLUDE_FILES
-        "/usr/include"
-        "/usr/include/c++"
-        "/usr/lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/ggml-profile.cpp"
-    )
-    string(JOIN "," EXCLUDE_LIST ${EXCLUDE_FILES})
 
-    target_compile_options(ggml-base PRIVATE
-        -g
-        -finstrument-functions
-        "-finstrument-functions-exclude-file-list=${EXCLUDE_LIST}"
-        $<$<COMPILE_LANGUAGE:C>:-fno-instrument-functions>
-    )
-
-    target_link_libraries(ggml-base PRIVATE dl)
-
-endif()
 
 function(ggml_add_backend_library backend)
     if (GGML_BACKEND_DL)
@@ -518,4 +497,27 @@ if (BUILD_SHARED_LIBS)
         target_compile_definitions(${target} PRIVATE GGML_BUILD)
         target_compile_definitions(${target} PUBLIC  GGML_SHARED)
     endforeach()
+endif()
+
+# add compile definitions for graph profiler      JingliangGao 2026/03/05
+if (GGML_GRAPH_PROFILER)
+    message("[INFO]: Graph profiler enabled for ggml library instrumentation")
+    add_compile_definitions(GGML_GRAPH_PROFILER)
+    set(EXCLUDE_FILES
+        "/usr/include"
+        "/usr/include/c++"
+        "/usr/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ggml-profile.cpp"
+    )
+    string(JOIN "," EXCLUDE_LIST ${EXCLUDE_FILES})
+
+    target_compile_options(ggml PRIVATE
+        -g
+        -finstrument-functions
+        "-finstrument-functions-exclude-file-list=${EXCLUDE_LIST}"
+        $<$<COMPILE_LANGUAGE:C>:-fno-instrument-functions>
+    )
+
+    target_link_libraries(ggml PRIVATE dl)
+
 endif()
