@@ -14,7 +14,7 @@
 #include <cxxabi.h>
 #include <stdlib.h>
 
-#define CACHE_SIZE 81920   /* Size : 8192 : 128k, 81920 : 1 M */
+#define CACHE_SIZE 163840   /* Size : 8192 : 128k, 81920 : 1 M, 163840 : 2 M */
 
 static std::string global_profile_buffer;
 static bool global_profile_started = false;
@@ -374,6 +374,33 @@ static const char *lookup_symbol(void *fn) {
     return NULL;
 }
 
+// static inline uint32_t hash_ptr(void *p) {
+//     uintptr_t x = (uintptr_t)p;
+//     x ^= x >> 33;
+//     x *= 0xff51afd7ed558ccdULL;
+//     x ^= x >> 33;
+//     return (uint32_t)x;
+// }
+
+// __attribute__((no_instrument_function))
+// static const char *lookup_symbol(void *fn) {
+//     uint32_t idx = hash_ptr(fn) & (CACHE_SIZE - 1);
+
+//     if (g_cache[idx].addr == fn) {
+//         return g_cache[idx].name;
+//     }
+
+//     return NULL; // 冲突 or 未命中
+// }
+
+// __attribute__((no_instrument_function))
+// static void insert_symbol(void *fn, const char *name) {
+//     uint32_t idx = hash_ptr(fn) & (CACHE_SIZE - 1);
+
+//     g_cache[idx].addr = fn;
+//     g_cache[idx].name = name;
+// }
+
 __attribute__((no_instrument_function))
 static const char *demangle(const char *name) {
     int status = 0;
@@ -388,8 +415,14 @@ static const char *demangle(const char *name) {
 
 __attribute__((no_instrument_function))
 static const char *resolve_symbol(void *fn) {
+    // auto t_start = std::chrono::high_resolution_clock::now();
     const char *name = lookup_symbol(fn);
     if (name) {
+        // auto t_check = std::chrono::high_resolution_clock::now();
+        // auto check_duration = std::chrono::duration_cast<std::chrono::microseconds>(t_check - t_start).count();
+        // if (check_duration > 10) {
+        //     fprintf(stderr, "ggml-profile: symbol lookup took %lld us for function name %s with pointer %p\n", (long long)check_duration, name, fn);
+        // }
         return name;
     }
 
@@ -408,6 +441,12 @@ static const char *resolve_symbol(void *fn) {
             g_cache[g_cache_count].name = final_name;
             g_cache_count++;
         }
+        // insert_symbol(fn, final_name);
+        // auto t_resolve = std::chrono::high_resolution_clock::now();
+        // auto resolve_duration = std::chrono::duration_cast<std::chrono::microseconds>(t_resolve - t_start).count();
+        // if (resolve_duration > 100) {
+        //     fprintf(stderr, "ggml-profile: symbol resolution took %lld us for function name %s with pointer %p\n", (long long)resolve_duration, final_name, fn);
+        // }
 
         if (strstr(final_name, "ggml") ||
             strstr(final_name, "llama")) {
