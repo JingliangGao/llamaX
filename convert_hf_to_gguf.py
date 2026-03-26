@@ -31,10 +31,10 @@ import gguf
 from gguf.vocab import MistralTokenizerType, MistralVocab
 
 try:
-    from mistral_common.tokens.tokenizers.base import TokenizerVersion # pyright: ignore[reportMissingImports]
-    from mistral_common.tokens.tokenizers.multimodal import DATASET_MEAN as _MISTRAL_COMMON_DATASET_MEAN, DATASET_STD as _MISTRAL_COMMON_DATASET_STD # pyright: ignore[reportMissingImports]
-    from mistral_common.tokens.tokenizers.tekken import Tekkenizer # pyright: ignore[reportMissingImports]
-    from mistral_common.tokens.tokenizers.sentencepiece import ( # pyright: ignore[reportMissingImports]
+    from mistral_common.tokens.tokenizers.base import TokenizerVersion # type: ignore[import-not-found]
+    from mistral_common.tokens.tokenizers.multimodal import DATASET_MEAN as _MISTRAL_COMMON_DATASET_MEAN, DATASET_STD as _MISTRAL_COMMON_DATASET_STD # type: ignore[import-not-found]
+    from mistral_common.tokens.tokenizers.tekken import Tekkenizer # type: ignore[import-not-found]
+    from mistral_common.tokens.tokenizers.sentencepiece import ( # type: ignore[import-not-found]
         SentencePieceTokenizer,
     )
 
@@ -45,9 +45,9 @@ except ImportError:
     _MISTRAL_COMMON_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
 
     _mistral_common_installed = False
-    TokenizerVersion = None
-    Tekkenizer = None
-    SentencePieceTokenizer = None
+    TokenizerVersion: Any = None
+    Tekkenizer: Any = None
+    SentencePieceTokenizer: Any = None
     _mistral_import_error_msg = (
         "Mistral format requires `mistral-common` to be installed. Please run "
         "`pip install mistral-common[image,audio]` to install it."
@@ -145,6 +145,7 @@ class ModelBase:
         self.model_name = model_name
         self.dir_model_card = dir_model  # overridden in convert_lora_to_gguf.py
         self._is_nvfp4 = False
+        self._is_mxfp4 = False
 
         # Apply heuristics to figure out typical tensor encoding based on first tensor's dtype
         # NOTE: can't use field "torch_dtype" in config.json, because some finetunes lie.
@@ -220,7 +221,7 @@ class ModelBase:
                     if weight_map is None or not isinstance(weight_map, dict):
                         raise ValueError(f"Can't load 'weight_map' from {index_name!r}")
                     tensor_names_from_index.update(weight_map.keys())
-                    part_dict: dict[str, None] = dict.fromkeys(weight_map.values(), None)
+                    part_dict: dict[str, None] = dict.fromkeys(weight_map.values(), None) # ty: ignore[invalid-assignment]
                     part_names = sorted(part_dict.keys())
             else:
                 weight_map = {}
@@ -712,6 +713,7 @@ class ModelBase:
     def prepare_tensors(self):
         # detect NVFP4 quantization (ModelOpt format)
         quant_algo = (self.hparams.get("quantization_config") or {}).get("quant_algo")
+        quant_method = (self.hparams.get("quantization_config") or {}).get("quant_method")
         quant_layers = (self.hparams.get("quantization_config") or {}).get("quantized_layers") or {}
         quant_config_file = self.dir_model / "hf_quant_config.json"
 
@@ -728,6 +730,7 @@ class ModelBase:
                 quant_algo = "NVFP4"
 
         self._is_nvfp4 = quant_algo == "NVFP4"
+        self._is_mxfp4 = quant_method == "mxfp4"
 
         # NVFP4 weights are repacked and written directly to gguf_writer.
         # This must run before dequant_model so NVFP4 tensors are removed
@@ -876,6 +879,12 @@ class ModelBase:
         if self.metadata.name is None:
             self.metadata.name = self.dir_model.name
 
+        if self.ftype in (gguf.LlamaFileType.ALL_F32, gguf.LlamaFileType.MOSTLY_F16, gguf.LlamaFileType.MOSTLY_BF16):
+            if self._is_nvfp4:
+                self.ftype = gguf.LlamaFileType.MOSTLY_NVFP4
+            elif self._is_mxfp4:
+                self.ftype = gguf.LlamaFileType.MOSTLY_MXFP4_MOE
+
         # Generate parameter weight class (useful for leader boards) if not yet determined
         if self.metadata.size_label is None and total_params > 0:
             self.metadata.size_label = gguf.size_label(total_params, shared_params, expert_params, expert_count)
@@ -938,6 +947,9 @@ class ModelBase:
         if "thinker_config" in config:
             # rename for Qwen2.5-Omni
             config["text_config"] = config["thinker_config"]["text_config"]
+        if "language_config" in config:
+            # rename for DeepSeekOCR
+            config["text_config"] = config["language_config"]
         if "lfm" in config:
             # rename for LFM2-Audio
             config["text_config"] = config["lfm"]
@@ -1494,6 +1506,9 @@ class TextModel(ModelBase):
         if chkhsh == "e4d54df1ebc1f2b91acd986c5b51aa50837d5faf7c7398e73c1f9e9ee5d19869":
             # ref: https://huggingface.co/kakaocorp/kanana-2-30b-a3b-instruct-2601
             res = "kanana2"
+        if chkhsh == "862f827721df956049dff5ca81a57f29e575280bc622e290d3bf4e35eca29015":
+            # ref: https://huggingface.co/codefuse-ai/F2LLM-v2-4B
+            res = "f2llmv2"
 
         if res is None:
             logger.warning("\n")
@@ -2062,7 +2077,7 @@ class MmprojModel(ModelBase):
     preprocessor_config: dict[str, Any]
     global_config: dict[str, Any]
 
-    n_block_keys = ["n_layers", "num_hidden_layers", "n_layer", "num_layers", "depth", "encoder_layers", "vt_num_hidden_layers"]
+    n_block_keys = ["n_layers", "num_hidden_layers", "n_layer", "num_layers", "depth", "layers", "encoder_layers", "vt_num_hidden_layers"]
 
     has_vision_encoder: bool = True # by default
     has_audio_encoder: bool = False
@@ -4264,6 +4279,16 @@ class Qwen25OmniModel(Qwen2VLVisionModel):
 
 @ModelBase.register("InternVisionModel")
 class InternVisionModel(MmprojModel):
+
+    min_dynamic_tiles: int = 0
+    max_dynamic_tiles: int = 0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert self.hparams_vision is not None
+        self.min_dynamic_tiles = self.global_config.get("min_dynamic_patch", 0)
+        self.max_dynamic_tiles = self.global_config.get("max_dynamic_patch", 0)
+
     def set_gguf_parameters(self):
         assert self.hparams_vision is not None
         if isinstance(self.hparams_vision['image_size'], list):
@@ -4286,6 +4311,11 @@ class InternVisionModel(MmprojModel):
         downsample_ratio = self.global_config.get("downsample_ratio")
         assert downsample_ratio is not None
         self.gguf_writer.add_vision_projector_scale_factor(int(1.0 / downsample_ratio))
+        # older models may not have min/max_dynamic_patch in config
+        if self.min_dynamic_tiles > 0:
+            self.gguf_writer.add_vision_preproc_min_tiles(self.min_dynamic_tiles)
+        if self.max_dynamic_tiles > 0:
+            self.gguf_writer.add_vision_preproc_max_tiles(self.max_dynamic_tiles)
 
     def tensor_force_quant(self, name, new_name, bid, n_dims):
         if ".position_embd." in new_name:
@@ -4548,7 +4578,7 @@ class Qwen2MoeModel(TextModel):
                 raise ValueError(f"Unprocessed experts: {experts}")
 
 
-@ModelBase.register("Qwen3ForCausalLM")
+@ModelBase.register("Qwen3ForCausalLM", "Qwen3Model")
 class Qwen3Model(Qwen2Model):
     model_arch = gguf.MODEL_ARCH.QWEN3
 
@@ -5882,7 +5912,7 @@ class InternLM2Model(TextModel):
             logger.error(f'Error: Missing {tokenizer_path}')
             sys.exit(1)
 
-        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue]
+        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue] # ty: ignore[unresolved-attribute]
         sentencepiece_model.ParseFromString(open(tokenizer_path, "rb").read())
         add_prefix = sentencepiece_model.normalizer_spec.add_dummy_prefix
 
@@ -6203,7 +6233,7 @@ class BertModel(TextModel):
 
             vocab_size = max(self.hparams.get("vocab_size", 0), tokenizer.vocab_size)
         else:
-            sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue]
+            sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue] # ty: ignore[unresolved-attribute]
             sentencepiece_model.ParseFromString(open(tokenizer_path, "rb").read())
             assert sentencepiece_model.trainer_spec.model_type == 1  # UNIGRAM
 
@@ -6907,6 +6937,68 @@ class ConformerAudioModel(MmprojModel):
         if "conv.pointwise_conv" in name and name.endswith(".weight"):
             assert data_torch.shape[2] == 1
             data_torch = data_torch.reshape(data_torch.shape[0], data_torch.shape[1])
+
+        yield from super().modify_tensors(data_torch, name, bid)
+
+
+@ModelBase.register("DeepseekOCRForCausalLM")
+class DeepseekOCRVisionModel(MmprojModel):
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        hparams = self.hparams
+        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.DEEPSEEKOCR)
+        # default values below are taken from HF tranformers code
+        self.gguf_writer.add_vision_attention_layernorm_eps(hparams.get("layer_norm_eps", 1e-6))
+        self.gguf_writer.add_vision_use_gelu(True)
+        # calculate proj_scale_factor (used by tinygemma3 test model)
+        image_seq_length = self.preprocessor_config.get("image_seq_length", 256)
+        n_per_side = int(image_seq_length ** 0.5)
+        image_size = self.hparams["image_size"]
+        patch_size = self.hparams["patch_size"]
+        proj_scale_factor = (image_size // patch_size) // n_per_side
+        if proj_scale_factor > 0 and proj_scale_factor != 4:
+            # we only need to write this if it's not the default value
+            # in this case, we are converting a test model
+            self.gguf_writer.add_vision_projector_scale_factor(proj_scale_factor)
+        # @bluebread: there's no window_size in config but just add it here anyway
+        self.gguf_writer.add_vision_window_size(self.hparams.get("window_size", 14))
+
+        # SAM configuration
+        sam_hparams = hparams['sam']
+        self.gguf_writer.add_vision_sam_layers_count(sam_hparams['layers'])
+        self.gguf_writer.add_vision_sam_embedding_length(sam_hparams['width'])
+        self.gguf_writer.add_vision_sam_head_count(sam_hparams['heads'])
+
+    def get_vision_config(self) -> dict[str, Any]:
+        vision_config: dict[str, Any] | None = self.global_config.get("vision_config")
+
+        if not vision_config:
+            raise ValueError("DeepseekOCR model requires 'vision_config' in the model configuration, but it was not found")
+
+        vision_config['sam'] = vision_config['width']['sam_vit_b']
+        vision_config.update(vision_config['width']['clip-l-14-224'])
+        vision_config['hidden_size'] = vision_config['width']
+        vision_config['num_heads'] = vision_config['heads']
+        vision_config['intermediate_size'] = vision_config['heads'] * 4
+
+        return vision_config
+
+    def tensor_force_quant(self, name, new_name, bid, n_dims):
+        if ".embeddings." in name or 'pos_embed' in name:
+            return gguf.GGMLQuantizationType.F32
+        if ".rel_pos_h" in name or '.rel_pos_w' in name:
+            return gguf.GGMLQuantizationType.F32
+        return super().tensor_force_quant(name, new_name, bid, n_dims)
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        # Only process vision-related tensors, skip language model tensors
+        # Vision components: sam_model, vision_model, projector, image_newline, view_seperator
+        # Language model components to skip: lm_head, embed_tokens, layers, norm
+        if name.startswith(("lm_head.", "model.embed_tokens.", "model.layers.", "model.norm.")):
+            return
+
+        if name.endswith("pos_embed") or name.endswith("rel_pos_h") or name.endswith("rel_pos_w"):
+            name += ".weight"
 
         yield from super().modify_tensors(data_torch, name, bid)
 
@@ -8256,6 +8348,19 @@ class DeepseekV2Model(TextModel):
 
     merge_expert = True
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        hparams: dict = ModelBase.load_hparams(self.dir_model, is_mistral_format=False)
+        self.origin_hf_arch = hparams.get('architectures', [None])[0]
+
+        # special handling for Deepseek OCR
+        if self.origin_hf_arch == "DeepseekOCRForCausalLM":
+            self.model_arch = gguf.MODEL_ARCH.DEEPSEEK2OCR
+            self.gguf_writer.arch = gguf.MODEL_ARCH_NAMES[self.model_arch]
+            self.gguf_writer.add_architecture()
+            # default jinja template
+            self.gguf_writer.add_chat_template("{% for m in messages %}{{m['content']}}{% endfor %}")
+
     def set_vocab(self):
         try:
             self._set_vocab_gpt2()
@@ -8311,9 +8416,15 @@ class DeepseekV2Model(TextModel):
             raise NotImplementedError(f"Deepseek pre-tokenizer {tokpre!r} is not supported yet!")
 
     def set_gguf_parameters(self):
+        is_ocr = (self.model_arch == gguf.MODEL_ARCH.DEEPSEEK2OCR)
 
-        # note: deepseek2 using MLA converts into MQA (ie: GQA with 1 group)
-        self.hparams["num_key_value_heads"] = 1
+        if is_ocr:
+            self.hparams['rope_theta'] = self.hparams.get('rope_theta', 10000.0)
+        else:
+            # note: deepseek2 using MLA converts into MQA (ie: GQA with 1 group)
+            self.hparams["num_key_value_heads"] = 1
+
+        self.hparams['rms_norm_eps'] = self.hparams.get('rms_norm_eps', 1e-6)
 
         super().set_gguf_parameters()
         hparams = self.hparams
@@ -8327,16 +8438,18 @@ class DeepseekV2Model(TextModel):
             # Default: if no MoE, all layers are dense; if MoE, none are dense
             first_k_dense_replace = hparams["num_hidden_layers"] if not has_moe else 0
         self.gguf_writer.add_leading_dense_block_count(first_k_dense_replace)
+        kv_lora_rank = hparams.get("kv_lora_rank", 512)
         self.gguf_writer.add_vocab_size(hparams["vocab_size"])
         if "q_lora_rank" in hparams and hparams["q_lora_rank"] is not None:
             self.gguf_writer.add_q_lora_rank(hparams["q_lora_rank"])
-        self.gguf_writer.add_kv_lora_rank(hparams["kv_lora_rank"])
 
         # note: deepseek2 using MLA converts into MQA with larger heads, then decompresses to MHA
-        self.gguf_writer.add_key_length(hparams["kv_lora_rank"] + hparams["qk_rope_head_dim"])
-        self.gguf_writer.add_value_length(hparams["kv_lora_rank"])
-        self.gguf_writer.add_key_length_mla(hparams["qk_nope_head_dim"] + hparams["qk_rope_head_dim"])
-        self.gguf_writer.add_value_length_mla(hparams["v_head_dim"])
+        if not is_ocr:
+            self.gguf_writer.add_kv_lora_rank(kv_lora_rank)
+            self.gguf_writer.add_key_length(kv_lora_rank + hparams["qk_rope_head_dim"])
+            self.gguf_writer.add_value_length(kv_lora_rank)
+            self.gguf_writer.add_key_length_mla(hparams["qk_nope_head_dim"] + hparams["qk_rope_head_dim"])
+            self.gguf_writer.add_value_length_mla(hparams["v_head_dim"])
 
         # MoE parameters (required by C++ code for DEEPSEEK2 arch)
         # For non-MoE models like Youtu, use intermediate_size as expert_feed_forward_length
@@ -8368,8 +8481,15 @@ class DeepseekV2Model(TextModel):
     _experts: list[dict[str, Tensor]] | None = None
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-        # skip vision tensors and remove "language_model." for Kimi-VL and Kimi-K2.5
-        if "vision_tower" in name or "multi_modal_projector" in name or "mm_projector" in name:
+        # skip vision tensors and remove "language_model." for Kimi-VL and Kimi-K2.5, and DeepSeek-OCR
+        if ("vision_tower" in name
+                or "multi_modal_projector" in name
+                or "mm_projector" in name
+                or "vision_model" in name
+                or "image_newline" in name
+                or "model.projector" in name
+                or "sam_model" in name
+                or "view_seperator" in name):
             return
         if name.startswith("siglip2.") or name.startswith("merger."):
             return
@@ -8880,7 +9000,7 @@ class T5Model(TextModel):
         if not tokenizer_path.is_file():
             raise FileNotFoundError(f"File not found: {tokenizer_path}")
 
-        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue]
+        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue] # ty: ignore[unresolved-attribute]
         sentencepiece_model.ParseFromString(open(tokenizer_path, "rb").read())
 
         # some models like Pile-T5 family use BPE tokenizer instead of Unigram
@@ -9017,7 +9137,7 @@ class T5EncoderModel(TextModel):
         if not tokenizer_path.is_file():
             raise FileNotFoundError(f"File not found: {tokenizer_path}")
 
-        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue]
+        sentencepiece_model = model.ModelProto()  # pyright: ignore[reportAttributeAccessIssue] # ty: ignore[unresolved-attribute]
         sentencepiece_model.ParseFromString(open(tokenizer_path, "rb").read())
 
         # some models like Pile-T5 family use BPE tokenizer instead of Unigram
@@ -11125,8 +11245,7 @@ class GptOssModel(TextModel):
 
     # TODO: remove once MXFP4 is supported more generally
     def dequant_model(self):
-        quant_config = self.hparams.get("quantization_config")
-        if quant_config is not None and quant_config.get("quant_method") == "mxfp4":
+        if self._is_mxfp4:
             return
         return super().dequant_model()
 
@@ -12279,6 +12398,7 @@ class LazyTorchTensor(gguf.LazyBase):
             kwargs = {}
 
         if func is torch.Tensor.numpy:
+            assert len(args)
             return args[0].numpy()
 
         return cls._wrap_fn(func)(*args, **kwargs)
